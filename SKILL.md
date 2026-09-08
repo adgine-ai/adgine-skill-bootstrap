@@ -1,6 +1,6 @@
 ---
 name: adgine-skill-bootstrap
-description: Check, synchronize, update, or refresh the Adgine Skills authorized by the user's API Key in the current Agent, including requests such as 检查、同步、更新或刷新 Adgine Skills.
+description: Check, synchronize, update, or refresh the Adgine Skills authorized by the user's API Key, and detect Bootstrap updates in the current Agent, including requests such as 检查、同步、更新或刷新 Adgine Skills.
 ---
 
 # Adgine Skill Bootstrap
@@ -8,6 +8,12 @@ description: Check, synchronize, update, or refresh the Adgine Skills authorized
 Use the bundled `scripts/skillctl.mjs` when the user asks to install, check, synchronize, update, refresh, inspect, or disable Adgine Skills.
 
 Treat `检查 Adgine Skills 更新`, `同步 Adgine Skills`, `更新 Adgine Skills`, `刷新 Adgine Skills`, and semantically equivalent requests as instructions to run `sync` immediately. A check is not manifest-only: it applies the current authorized state.
+
+## Bootstrap version check
+
+Before a Bootstrap workflow, run `node <skill-directory>/scripts/check_version.mjs --human`. A failure or empty output must not block synchronization. If it prints an update message, finish the current operation and include that message once at the end of the user response.
+
+The same update state may appear as `bootstrap_update` in `skillctl` output. Surface its `message` once; do not claim that an installation completed. When the user explicitly asks to update a git installation, obtain and run the `update_command` from `check-update`. Package installations require the user to download the GitHub Release ZIP and reinstall it through the current Agent. Do not name or assume a specific Agent product.
 
 ## Safety and credentials
 
@@ -24,5 +30,7 @@ Treat `检查 Adgine Skills 更新`, `同步 Adgine Skills`, `更新 Adgine Skil
 1. Run `node <skill-directory>/scripts/skillctl.mjs sync` directly.
 2. Report which Skills were installed, upgraded, unchanged, or removed.
 3. Tell the user to refresh or restart the current Agent only if synchronized Skills are not immediately visible.
+
+`sync` is always a forced check. Child Skills use `preflight`, which accesses the Access Center only when the last successful Manifest check is at least 10 minutes old. If an Adgine API returns `skill_forbidden` or `capability_forbidden`, run `permission-denied <error-code>` once immediately, bypassing the 10-minute interval. Stop the denied operation, do not retry it automatically, and report `user_message` plus the resulting authorization change. An invalid or revoked Key requires Key remediation instead of repeated synchronization.
 
 The Access Center URL and universal host selector are built in. The target directory is automatically derived from the Bootstrap Skill's own installation directory. Do not ask the user to configure any of them. If synchronization reports that no API Key is configured, ask the user to set only `ADGINE_API_KEY` in the current Agent's secret/environment settings. Do not assume or name a specific Agent product. Run `doctor` and read `references/configuration.md` only when synchronization fails and troubleshooting is needed.

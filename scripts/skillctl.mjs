@@ -9,10 +9,13 @@ import readline from "node:readline";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 
+import { formatUserInline, getVersionState } from "./check_version.mjs";
+
 const LOCK_SCHEMA_VERSION = 1;
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 1000;
+const MANIFEST_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const IDENTIFIER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const ACCESS_CENTER_URL = "https://access-center.afrgame.dev:31000";
 const AGENT_HOST = "universal";
@@ -61,6 +64,15 @@ async function main(argv = process.argv.slice(2)) {
     case "sync":
       output(await withSyncLock(cfg.skillsDir, () => synchronize(cfg, loadAPIKey(cfg))));
       return;
+    case "preflight":
+      output(await preflight(cfg));
+      return;
+    case "check-update":
+      output((await getVersionState()) || { update_available: false, check_unavailable: true });
+      return;
+    case "permission-denied":
+      output(await handlePermissionDenied(cfg, argv[1]));
+      return;
     case "list":
       output(readLock(cfg.skillsDir));
       return;
@@ -71,11 +83,40 @@ async function main(argv = process.argv.slice(2)) {
     case "help":
     case "--help":
     case "-h":
-      process.stdout.write("Usage: skillctl.mjs {doctor|login|manifest|sync|list|disable <skill-id>}\n");
+      process.stdout.write("Usage: skillctl.mjs {doctor|login|manifest|sync|preflight|check-update|permission-denied <error-code>|list|disable <skill-id>}\n");
       return;
     default:
       throw new Error(`unknown command: ${command}`);
   }
+}
+
+async function handlePermissionDenied(cfg, errorCode) {
+  if (!new Set(["skill_forbidden", "capability_forbidden"]).has(errorCode)) {
+    throw new Error("permission-denied requires skill_forbidden or capability_forbidden");
+  }
+  const result = await withSyncLock(cfg.skillsDir, () => synchronize(cfg, loadAPIKey(cfg), { mode: "permission-denied" }));
+  result.permission_error_code = errorCode;
+  result.user_message = "API Key 的 Adgine Skill 权限已发生变化；已强制同步最新授权，本次被拒绝的操作不会自动重试。";
+  return result;
+}
+
+async function preflight(cfg) {
+  const lock = readLock(cfg.skillsDir);
+  if (isManifestCheckFresh(lock)) {
+    const result = {
+      mode: "preflight",
+      manifest_checked: false,
+      reason: "checked-within-10-minutes",
+      revision: lock.manifest_revision,
+      installed: [],
+      upgraded: [],
+      unchanged: [],
+      removed: [],
+    };
+    addBootstrapUpdate(result, await getVersionState());
+    return result;
+  }
+  return withSyncLock(cfg.skillsDir, () => synchronize(cfg, loadAPIKey(cfg), { mode: "preflight" }));
 }
 
 async function doctor(cfg) {
@@ -114,13 +155,16 @@ async function login(cfg) {
   return { saved: true, credentials_file: cfg.credentialsFile };
 }
 
-async function synchronize(cfg, apiKey) {
+async function synchronize(cfg, apiKey, { mode = "sync" } = {}) {
   if (typeof fetch !== "function") throw new Error("Node.js 18 or newer is required");
   fs.mkdirSync(cfg.skillsDir, { recursive: true, mode: 0o700 });
-  const manifest = await fetchManifest(cfg, apiKey);
+  const [manifest, bootstrapVersion] = await Promise.all([
+    fetchManifest(cfg, apiKey),
+    getVersionState(),
+  ]);
   const lock = readLock(cfg.skillsDir);
   const desired = new Map(manifest.skills.map((skill) => [skill.id, skill]));
-  const result = { revision: manifest.revision, installed: [], upgraded: [], unchanged: [], removed: [] };
+  const result = { mode, manifest_checked: true, revision: manifest.revision, installed: [], upgraded: [], unchanged: [], removed: [] };
 
   for (const skill of manifest.skills) {
     const current = lock.installed[skill.id];
@@ -146,10 +190,32 @@ async function synchronize(cfg, apiKey) {
     result.removed.push(skillID);
   }
 
+  const checkedAt = new Date().toISOString();
   lock.manifest_revision = manifest.revision;
-  lock.updated_at = new Date().toISOString();
+  lock.manifest_checked_at = checkedAt;
+  lock.updated_at = checkedAt;
   writeLock(cfg.skillsDir, lock);
+  addBootstrapUpdate(result, bootstrapVersion);
   return result;
+}
+
+function isManifestCheckFresh(lock, now = Date.now()) {
+  const timestamp = Date.parse(lock.manifest_checked_at || lock.updated_at || "");
+  if (!Number.isFinite(timestamp)) return false;
+  const age = now - timestamp;
+  return age >= 0 && age < MANIFEST_CHECK_INTERVAL_MS;
+}
+
+function addBootstrapUpdate(result, state) {
+  if (!state?.update_available) return;
+  result.bootstrap_update = {
+    current: state.current,
+    latest: state.latest,
+    install_type: state.install_type,
+    release_url: state.release_url,
+    update_command: state.update_command,
+    message: formatUserInline(state),
+  };
 }
 
 async function fetchManifest(cfg, apiKey) {
@@ -528,4 +594,4 @@ if (invokedAsScript) {
   });
 }
 
-export { extractZip, sanitizeZipEntry, sha256Hex, validateManifest };
+export { extractZip, isManifestCheckFresh, sanitizeZipEntry, sha256Hex, validateManifest };

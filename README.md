@@ -13,3 +13,5 @@ The source of truth lives in the private `adgine-skills` repository. Files in th
 5. If the synchronized Skills are not visible immediately, refresh or restart the Agent once.
 
 Each Agent's native dynamic discovery behavior is an explicit compatibility decision gate; it is not assumed to be guaranteed by the Bootstrap.
+
+The Bootstrap checks its installed `VERSION` against GitHub and prompts when a newer release ZIP is available. Child Skills call the cached preflight path, which refreshes the Access Center Manifest at most once per 10-minute activity window. Explicit synchronization and recognized permission-denied responses force an immediate refresh.
