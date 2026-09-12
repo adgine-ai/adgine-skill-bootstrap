@@ -2,3 +2,4 @@
 *.log
 .adgine-skillctl-lock.json
 .adgine-skillctl-sync.lock
+.adgine-runtime.json

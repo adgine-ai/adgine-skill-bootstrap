@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import stat
 import zipfile
@@ -17,6 +18,7 @@ PACKAGE_FILES = (
     Path("SKILL.md"),
     Path("VERSION"),
     Path("release.json"),
+    Path("bootstrap-profile.json"),
     Path("references/configuration.md"),
     Path("scripts/check_version.mjs"),
     Path("scripts/skillctl.mjs"),
@@ -37,7 +39,14 @@ def main() -> int:
 
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    artifact = output / f"adgine-skill-bootstrap-{version}.zip"
+    profile = json.loads((ROOT / "bootstrap-profile.json").read_text(encoding="utf-8"))
+    channel = profile.get("channel")
+    if channel not in {"test", "production"}:
+        raise SystemExit(f"ERROR: invalid Bootstrap channel: {channel!r}")
+    artifact_name = f"adgine-skill-bootstrap-{version}.zip"
+    if channel == "test":
+        artifact_name = f"adgine-skill-bootstrap-test-{version}.zip"
+    artifact = output / artifact_name
     with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for relative in PACKAGE_FILES:
             source = ROOT / relative

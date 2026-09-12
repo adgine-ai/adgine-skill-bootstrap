@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import { formatUserInline, getVersionState } from "./check_version.mjs";
 
 const LOCK_SCHEMA_VERSION = 1;
+const PROFILE_SCHEMA_VERSION = 1;
+const RUNTIME_SCHEMA_VERSION = 1;
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 1000;
@@ -19,26 +21,64 @@ const MANIFEST_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const IDENTIFIER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 const CAPABILITY_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
-const ACCESS_CENTER_URL = "https://access-center.afrgame.dev:31000";
 const AGENT_HOST = "universal";
 
 function configuration() {
-  // Production configuration is intentionally fixed so users only need to
-  // provide ADGINE_API_KEY. The managed Skills directory is the Bootstrap
-  // Skill's parent directory, so the same package works in different Agents.
-  // Isolated tests may override paths/endpoint.
+  // The generated package carries one immutable test or production profile.
+  // Isolated tests may override paths and endpoints, but normal users only
+  // configure ADGINE_API_KEY.
   const testMode = process.env.NODE_ENV === "test";
+  const testProfileFile = testMode ? process.env.ADGINE_SKILLCTL_TEST_PROFILE_FILE : "";
   const testBaseUrl = testMode ? process.env.ADGINE_SKILLCTL_TEST_BASE_URL : "";
   const testSkillsDir = testMode ? process.env.ADGINE_SKILLCTL_TEST_SKILLS_DIR : "";
   const testCredentialsFile = testMode ? process.env.ADGINE_SKILLCTL_TEST_CREDENTIALS_FILE : "";
+  const profile = loadBootstrapProfile(testProfileFile ? path.resolve(expandHome(testProfileFile)) : undefined);
   const skillsDir = testSkillsDir ? path.resolve(expandHome(testSkillsDir)) : detectAgentSkillsDir();
   return {
-    baseUrl: (testBaseUrl || ACCESS_CENTER_URL).replace(/\/+$/, ""),
+    channel: profile.channel,
+    environment: profile.environment,
+    baseUrl: (testBaseUrl || profile.access_center_url).replace(/\/+$/, ""),
     credentialsFile: expandHome(testCredentialsFile || "~/.adgine/credentials.json"),
+    runtimeFile: path.join(skillsDir, ".adgine-runtime.json"),
     skillsDir,
     skillsDirSource: testSkillsDir ? "test-override" : "bootstrap-parent",
     host: AGENT_HOST,
   };
+}
+
+function bootstrapRoot() {
+  return path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+}
+
+function loadBootstrapProfile(profilePath = path.join(bootstrapRoot(), "bootstrap-profile.json")) {
+  if (!fs.statSync(profilePath, { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Bootstrap profile is missing: ${profilePath}`);
+  }
+  let profile;
+  try {
+    profile = JSON.parse(fs.readFileSync(profilePath, "utf8"));
+  } catch {
+    throw new Error(`Bootstrap profile is invalid: ${profilePath}`);
+  }
+  return validateBootstrapProfile(profile);
+}
+
+function validateBootstrapProfile(profile) {
+  if (
+    !profile ||
+    profile.schema_version !== PROFILE_SCHEMA_VERSION ||
+    !new Set(["test", "production"]).has(profile.channel) ||
+    profile.environment !== profile.channel ||
+    typeof profile.access_center_url !== "string" ||
+    typeof profile.version_url !== "string" ||
+    typeof profile.release_url !== "string"
+  ) {
+    throw new Error("Bootstrap profile has an invalid environment contract");
+  }
+  validateBaseURL(profile.access_center_url);
+  validateHTTPSURL(profile.version_url, "Bootstrap version URL");
+  validateHTTPSURL(profile.release_url, "Bootstrap release URL");
+  return profile;
 }
 
 function detectAgentSkillsDir() {
@@ -104,7 +144,7 @@ async function handlePermissionDenied(cfg, errorCode) {
 
 async function preflight(cfg) {
   const lock = readLock(cfg.skillsDir);
-  if (isManifestCheckFresh(lock)) {
+  if (isManifestCheckFresh(lock) && runtimeMatchesConfiguration(cfg, lock)) {
     const result = {
       mode: "preflight",
       manifest_checked: false,
@@ -113,6 +153,10 @@ async function preflight(cfg) {
       permission_revision: lock.permission_revision ?? lock.manifest_revision,
       catalog_revision: lock.catalog_revision ?? 0,
       manifest_etag: lock.manifest_etag ?? "",
+      channel: cfg.channel,
+      environment: cfg.environment,
+      access_center_url: cfg.baseUrl,
+      service_endpoints: readRuntimeConfig(cfg.runtimeFile)?.services || {},
       installed: [],
       upgraded: [],
       unchanged: [],
@@ -138,6 +182,8 @@ async function doctor(cfg) {
     platform: process.platform,
     architecture: process.arch,
     fetch_available: typeof fetch === "function",
+    channel: cfg.channel,
+    environment: cfg.environment,
     access_center_url: cfg.baseUrl,
     host: cfg.host,
     skills_dir: cfg.skillsDir,
@@ -146,7 +192,17 @@ async function doctor(cfg) {
     writable,
     api_key_configured: Boolean(findAPIKey(cfg)),
     credentials_file: cfg.credentialsFile,
+    runtime_file: cfg.runtimeFile,
   };
+  try {
+    const runtime = readRuntimeConfig(cfg.runtimeFile);
+    report.runtime_configured = Boolean(runtime);
+    report.runtime_environment = runtime?.environment || "";
+    report.service_endpoints = runtime?.services || {};
+  } catch (error) {
+    report.runtime_configured = false;
+    report.runtime_error = error.message;
+  }
   if (!report.fetch_available) {
     report.warning = "Node.js 18 or newer is required because fetch is unavailable.";
   }
@@ -157,7 +213,14 @@ async function login(cfg) {
   const apiKey = (await readSecret("Adgine API Key: ")).trim();
   validateAPIKeyShape(apiKey);
   atomicWriteJSON(cfg.credentialsFile, { schema_version: 1, api_key: apiKey }, 0o600);
-  return { saved: true, credentials_file: cfg.credentialsFile };
+  if (fs.existsSync(cfg.runtimeFile)) fs.unlinkSync(cfg.runtimeFile);
+  return {
+    saved: true,
+    channel: cfg.channel,
+    environment: cfg.environment,
+    access_center_url: cfg.baseUrl,
+    credentials_file: cfg.credentialsFile,
+  };
 }
 
 async function synchronize(cfg, apiKey, { mode = "sync" } = {}) {
@@ -172,6 +235,10 @@ async function synchronize(cfg, apiKey, { mode = "sync" } = {}) {
   const result = {
     mode,
     manifest_checked: true,
+    channel: cfg.channel,
+    environment: manifest.runtime.environment,
+    access_center_url: cfg.baseUrl,
+    service_endpoints: manifest.runtime.services,
     revision: manifest.permission_revision,
     permission_revision: manifest.permission_revision,
     catalog_revision: manifest.catalog_revision,
@@ -207,11 +274,14 @@ async function synchronize(cfg, apiKey, { mode = "sync" } = {}) {
   }
 
   const checkedAt = new Date().toISOString();
+  writeRuntimeConfig(cfg, manifest, checkedAt, apiKey);
   lock.manifest_revision = manifest.permission_revision;
   lock.permission_revision = manifest.permission_revision;
   lock.catalog_revision = manifest.catalog_revision;
   lock.manifest_etag = manifest.manifest_etag;
   lock.manifest_checked_at = checkedAt;
+  lock.environment = cfg.environment;
+  lock.access_center_url = cfg.baseUrl;
   lock.updated_at = checkedAt;
   writeLock(cfg.skillsDir, lock);
   addBootstrapUpdate(result, bootstrapVersion);
@@ -246,7 +316,7 @@ async function fetchManifest(cfg, apiKey) {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "User-Agent": "adgine-skillctl/0.3.0" },
   });
   if (!response.ok) throw await responseError(response, "manifest request failed");
-  return validateManifest(await response.json());
+  return validateManifest(await response.json(), { expectedEnvironment: cfg.environment });
 }
 
 async function downloadSkill(cfg, apiKey, skill) {
@@ -288,7 +358,10 @@ async function responseError(response, fallback) {
   return new Error(`${fallback}: HTTP ${response.status}${code ? ` (${code})` : ""}`);
 }
 
-function validateManifest(value) {
+function validateManifest(value, { expectedEnvironment = "" } = {}) {
+  if (expectedEnvironment && value?.runtime?.environment && value.runtime.environment !== expectedEnvironment) {
+    throw new Error(`Access Center environment ${value.runtime.environment} does not match Bootstrap ${expectedEnvironment}`);
+  }
   if (
     !value ||
     value.schema_version !== 2 ||
@@ -298,6 +371,7 @@ function validateManifest(value) {
     !Number.isSafeInteger(value.catalog_revision) ||
     value.catalog_revision < 1 ||
     !/^[0-9a-f]{64}$/.test(value.manifest_etag) ||
+    !validManifestRuntime(value.runtime, expectedEnvironment) ||
     !Array.isArray(value.skills)
   ) {
     throw new Error("Access Center returned an invalid v2 manifest");
@@ -328,6 +402,31 @@ function validateManifest(value) {
     seen.add(skill.id);
   }
   return value;
+}
+
+function validManifestRuntime(runtime, expectedEnvironment) {
+  if (
+    !runtime ||
+    !IDENTIFIER_PATTERN.test(runtime.environment) ||
+    (expectedEnvironment && runtime.environment !== expectedEnvironment) ||
+    !runtime.services ||
+    typeof runtime.services !== "object" ||
+    Array.isArray(runtime.services) ||
+    !runtime.services["geo-api"]
+  ) {
+    return false;
+  }
+  const entries = Object.entries(runtime.services);
+  if (!entries.length) return false;
+  return entries.every(([serviceID, endpoint]) => {
+    if (!IDENTIFIER_PATTERN.test(serviceID) || !endpoint || typeof endpoint.base_url !== "string") return false;
+    try {
+      validateBaseURL(endpoint.base_url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 function installArchive(skillsDir, skillID, archive, managed) {
@@ -457,6 +556,8 @@ function readLock(skillsDir) {
       permission_revision: 0,
       catalog_revision: 0,
       manifest_etag: "",
+      environment: "",
+      access_center_url: "",
       updated_at: null,
       installed: {},
     };
@@ -466,6 +567,63 @@ function readLock(skillsDir) {
     throw new Error(`invalid Adgine lock file: ${lockPath}`);
   }
   return value;
+}
+
+function runtimeMatchesConfiguration(cfg, lock) {
+  if (lock.environment !== cfg.environment || lock.access_center_url !== cfg.baseUrl) return false;
+  try {
+    const runtime = readRuntimeConfig(cfg.runtimeFile);
+    const apiKey = findAPIKey(cfg);
+    return Boolean(
+      runtime &&
+      apiKey &&
+      runtime.environment === cfg.environment &&
+      runtime.access_center_url === cfg.baseUrl &&
+      runtime.manifest_etag === lock.manifest_etag &&
+      runtime.key_fingerprint === sha256Hex(Buffer.from(apiKey, "utf8")),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function readRuntimeConfig(runtimeFile) {
+  if (!fs.existsSync(runtimeFile)) return null;
+  let value;
+  try {
+    value = JSON.parse(fs.readFileSync(runtimeFile, "utf8"));
+  } catch {
+    throw new Error(`invalid managed runtime file: ${runtimeFile}`);
+  }
+  if (
+    !value ||
+    value.schema_version !== RUNTIME_SCHEMA_VERSION ||
+    !IDENTIFIER_PATTERN.test(value.environment) ||
+    typeof value.access_center_url !== "string" ||
+    !/^[0-9a-f]{64}$/.test(value.manifest_etag) ||
+    !/^[0-9a-f]{64}$/.test(value.key_fingerprint) ||
+    !validManifestRuntime({ environment: value.environment, services: value.services }, value.environment)
+  ) {
+    throw new Error(`invalid managed runtime file: ${runtimeFile}`);
+  }
+  validateBaseURL(value.access_center_url);
+  return value;
+}
+
+function writeRuntimeConfig(cfg, manifest, updatedAt, apiKey) {
+  const services = {};
+  for (const [serviceID, endpoint] of Object.entries(manifest.runtime.services)) {
+    services[serviceID] = { base_url: endpoint.base_url.replace(/\/+$/, "") };
+  }
+  atomicWriteJSON(cfg.runtimeFile, {
+    schema_version: RUNTIME_SCHEMA_VERSION,
+    environment: manifest.runtime.environment,
+    access_center_url: cfg.baseUrl,
+    manifest_etag: manifest.manifest_etag,
+    key_fingerprint: sha256Hex(Buffer.from(apiKey, "utf8")),
+    services,
+    updated_at: updatedAt,
+  }, 0o600);
 }
 
 function writeLock(skillsDir, value) {
@@ -562,6 +720,18 @@ function validateBaseURL(value) {
   }
 }
 
+function validateHTTPSURL(value, label) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${label} must be an HTTPS URL`);
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    throw new Error(`${label} must be an HTTPS URL`);
+  }
+}
+
 function atomicWriteJSON(target, value, mode) {
   const directory = path.dirname(target);
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -650,4 +820,12 @@ if (invokedAsScript) {
   });
 }
 
-export { extractZip, isManifestCheckFresh, sanitizeZipEntry, sha256Hex, validateAPIKeyShape, validateManifest };
+export {
+  extractZip,
+  isManifestCheckFresh,
+  sanitizeZipEntry,
+  sha256Hex,
+  validateAPIKeyShape,
+  validateBootstrapProfile,
+  validateManifest,
+};
