@@ -1,0 +1,5 @@
+.DS_Store
+*.log
+.adgine-skillctl-lock.json
+.adgine-skillctl-sync.lock
+.adgine-runtime.json
