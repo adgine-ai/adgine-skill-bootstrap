@@ -1,6 +1,6 @@
 # Bootstrap configuration
 
-The only user setting is `ADGINE_API_KEY`. Supply it through the current Agent's secret/environment configuration.
+The only user setting is `ADGINE_API_KEY`. Supply a new `adg_sk_live_*` Key through the current Agent's secret/environment configuration. Legacy `geo_sk_live_*`, `abi_*`, and POC `agk_*` Keys are not accepted by Bootstrap.
 
 Bootstrap already uses:
 
@@ -15,6 +15,8 @@ node scripts/skillctl.mjs sync
 ```
 
 Requests to check, synchronize, update, or refresh Adgine Skills all run this same command and apply the server Manifest. An empty Manifest is a normal authorization result: every managed child Skill is removed from the local Skill directory and lock file.
+
+The server returns a v2 personalized Manifest. `permission_revision` changes when the Key's effective permissions change, `catalog_revision` changes when active Skill releases change, and `manifest_etag` identifies their combined result for the selected host.
 
 Child Skills run the cached preflight command before doing their work:
 

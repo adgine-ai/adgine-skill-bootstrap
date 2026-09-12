@@ -18,11 +18,13 @@ The same update state may appear as `bootstrap_update` in `skillctl` output. Sur
 ## Safety and credentials
 
 - Never ask the user to paste an API Key into ordinary conversation text.
+- Accept only the new `adg_sk_live_*` Key format. Legacy `geo_sk_live_*` and `abi_*` Keys continue through their existing product flows, and POC `agk_*` Keys are unsupported.
 - Never place an API Key in a command-line argument, log, report, or lock file.
 - Use the host's secret environment injection through `ADGINE_API_KEY`.
 - If secret injection is unavailable, use `skillctl login` with the Key supplied on standard input; it stores the credential in a user-only file.
 - Only manage Skill directories recorded in the Adgine lock file. Do not alter unrelated Skills.
 - The server Manifest is authoritative. An empty `skills` list is valid and means all managed child Skills must be removed.
+- Treat the v2 Manifest's `permission_revision`, `catalog_revision`, and `manifest_etag` as server-owned synchronization identity; never synthesize or edit them locally.
 - Never restore, enable, or retain a managed child Skill that is absent from the latest Manifest. Authorization must be restored on the server before it can be installed again.
 
 ## Workflow

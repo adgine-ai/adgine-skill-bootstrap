@@ -17,6 +17,8 @@ const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 1000;
 const MANIFEST_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const IDENTIFIER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
+const CAPABILITY_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
 const ACCESS_CENTER_URL = "https://access-center.afrgame.dev:31000";
 const AGENT_HOST = "universal";
 
@@ -91,8 +93,8 @@ async function main(argv = process.argv.slice(2)) {
 }
 
 async function handlePermissionDenied(cfg, errorCode) {
-  if (!new Set(["skill_forbidden", "capability_forbidden"]).has(errorCode)) {
-    throw new Error("permission-denied requires skill_forbidden or capability_forbidden");
+  if (!new Set(["skill_forbidden", "capability_forbidden", "operation_forbidden"]).has(errorCode)) {
+    throw new Error("permission-denied requires skill_forbidden, capability_forbidden, or operation_forbidden");
   }
   const result = await withSyncLock(cfg.skillsDir, () => synchronize(cfg, loadAPIKey(cfg), { mode: "permission-denied" }));
   result.permission_error_code = errorCode;
@@ -108,6 +110,9 @@ async function preflight(cfg) {
       manifest_checked: false,
       reason: "checked-within-10-minutes",
       revision: lock.manifest_revision,
+      permission_revision: lock.permission_revision ?? lock.manifest_revision,
+      catalog_revision: lock.catalog_revision ?? 0,
+      manifest_etag: lock.manifest_etag ?? "",
       installed: [],
       upgraded: [],
       unchanged: [],
@@ -164,7 +169,18 @@ async function synchronize(cfg, apiKey, { mode = "sync" } = {}) {
   ]);
   const lock = readLock(cfg.skillsDir);
   const desired = new Map(manifest.skills.map((skill) => [skill.id, skill]));
-  const result = { mode, manifest_checked: true, revision: manifest.revision, installed: [], upgraded: [], unchanged: [], removed: [] };
+  const result = {
+    mode,
+    manifest_checked: true,
+    revision: manifest.permission_revision,
+    permission_revision: manifest.permission_revision,
+    catalog_revision: manifest.catalog_revision,
+    manifest_etag: manifest.manifest_etag,
+    installed: [],
+    upgraded: [],
+    unchanged: [],
+    removed: [],
+  };
 
   for (const skill of manifest.skills) {
     const current = lock.installed[skill.id];
@@ -191,7 +207,10 @@ async function synchronize(cfg, apiKey, { mode = "sync" } = {}) {
   }
 
   const checkedAt = new Date().toISOString();
-  lock.manifest_revision = manifest.revision;
+  lock.manifest_revision = manifest.permission_revision;
+  lock.permission_revision = manifest.permission_revision;
+  lock.catalog_revision = manifest.catalog_revision;
+  lock.manifest_etag = manifest.manifest_etag;
   lock.manifest_checked_at = checkedAt;
   lock.updated_at = checkedAt;
   writeLock(cfg.skillsDir, lock);
@@ -224,7 +243,7 @@ async function fetchManifest(cfg, apiKey) {
   const manifestURL = new URL("/api/v1/skills/manifest", cfg.baseUrl);
   manifestURL.searchParams.set("host", cfg.host);
   const response = await fetchWithTimeout(manifestURL, {
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "User-Agent": "adgine-skillctl/0.1.0" },
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "User-Agent": "adgine-skillctl/0.3.0" },
   });
   if (!response.ok) throw await responseError(response, "manifest request failed");
   return validateManifest(await response.json());
@@ -235,7 +254,7 @@ async function downloadSkill(cfg, apiKey, skill) {
   const allowedOrigin = new URL(cfg.baseUrl).origin;
   if (targetURL.origin !== allowedOrigin) throw new Error(`refusing cross-origin artifact URL for ${skill.id}`);
   const response = await fetchWithTimeout(targetURL, {
-    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/zip", "User-Agent": "adgine-skillctl/0.1.0" },
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/zip", "User-Agent": "adgine-skillctl/0.3.0" },
   });
   if (!response.ok) throw await responseError(response, `download failed for ${skill.id}`);
   const declaredLength = Number(response.headers.get("content-length") || 0);
@@ -270,12 +289,39 @@ async function responseError(response, fallback) {
 }
 
 function validateManifest(value) {
-  if (!value || value.schema_version !== 1 || !Number.isSafeInteger(value.revision) || value.revision < 1 || !Array.isArray(value.skills)) {
-    throw new Error("Access Center returned an invalid manifest")
+  if (
+    !value ||
+    value.schema_version !== 2 ||
+    !Number.isSafeInteger(value.permission_revision) ||
+    value.permission_revision < 1 ||
+    value.revision !== value.permission_revision ||
+    !Number.isSafeInteger(value.catalog_revision) ||
+    value.catalog_revision < 1 ||
+    !/^[0-9a-f]{64}$/.test(value.manifest_etag) ||
+    !Array.isArray(value.skills)
+  ) {
+    throw new Error("Access Center returned an invalid v2 manifest");
   }
   const seen = new Set();
   for (const skill of value.skills) {
-    if (!skill || !IDENTIFIER_PATTERN.test(skill.id) || typeof skill.display_name !== "string" || !skill.display_name || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(skill.version) || typeof skill.download_url !== "string" || !skill.download_url || !/^[0-9a-f]{64}$/.test(skill.sha256) || !Number.isSafeInteger(skill.size) || skill.size < 1) {
+    const expectedInstall = skill?.id ? `skill.${skill.id}.install` : "";
+    if (
+      !skill ||
+      !IDENTIFIER_PATTERN.test(skill.id) ||
+      typeof skill.display_name !== "string" ||
+      !skill.display_name ||
+      !VERSION_PATTERN.test(skill.version) ||
+      typeof skill.download_url !== "string" ||
+      !skill.download_url ||
+      !/^[0-9a-f]{64}$/.test(skill.sha256) ||
+      !Number.isSafeInteger(skill.size) ||
+      skill.size < 1 ||
+      skill.install_capability !== expectedInstall ||
+      !Array.isArray(skill.required_capabilities) ||
+      new Set(skill.required_capabilities).size !== skill.required_capabilities.length ||
+      skill.required_capabilities.includes(expectedInstall) ||
+      skill.required_capabilities.some((code) => typeof code !== "string" || !CAPABILITY_PATTERN.test(code))
+    ) {
       throw new Error("Access Center returned an invalid Skill entry");
     }
     if (seen.has(skill.id)) throw new Error(`manifest contains duplicate Skill ${skill.id}`);
@@ -404,7 +450,17 @@ function sanitizeZipEntry(name) {
 
 function readLock(skillsDir) {
   const lockPath = path.join(skillsDir, ".adgine-skillctl-lock.json");
-  if (!fs.existsSync(lockPath)) return { schema_version: LOCK_SCHEMA_VERSION, manifest_revision: 0, updated_at: null, installed: {} };
+  if (!fs.existsSync(lockPath)) {
+    return {
+      schema_version: LOCK_SCHEMA_VERSION,
+      manifest_revision: 0,
+      permission_revision: 0,
+      catalog_revision: 0,
+      manifest_etag: "",
+      updated_at: null,
+      installed: {},
+    };
+  }
   const value = JSON.parse(fs.readFileSync(lockPath, "utf8"));
   if (!value || value.schema_version !== LOCK_SCHEMA_VERSION || !value.installed || typeof value.installed !== "object" || Array.isArray(value.installed)) {
     throw new Error(`invalid Adgine lock file: ${lockPath}`);
@@ -496,7 +552,7 @@ function loadAPIKey(cfg) {
 }
 
 function validateAPIKeyShape(apiKey) {
-  if (!/^agk_[a-z0-9_-]+\.[A-Za-z0-9_-]{16,}$/.test(apiKey)) throw new Error("Adgine API Key format is invalid");
+  if (!/^adg_sk_live_[A-Za-z0-9_-]{17,}$/.test(apiKey)) throw new Error("Adgine API Key format is invalid");
 }
 
 function validateBaseURL(value) {
@@ -594,4 +650,4 @@ if (invokedAsScript) {
   });
 }
 
-export { extractZip, isManifestCheckFresh, sanitizeZipEntry, sha256Hex, validateManifest };
+export { extractZip, isManifestCheckFresh, sanitizeZipEntry, sha256Hex, validateAPIKeyShape, validateManifest };

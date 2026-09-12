@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "adgine-skill-bootstrap",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "source": "adgine-skills/bootstrap/universal",
   "skillctl_source": "adgine-skills/packages/skillctl"
 }
