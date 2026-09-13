@@ -19,6 +19,7 @@ const MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 1000;
 const MANIFEST_CHECK_INTERVAL_MS = 10 * 60 * 1000;
 const IDENTIFIER_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+const SERVICE_IDENTIFIER_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
 const VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
 const CAPABILITY_PATTERN = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
 const AGENT_HOST = "universal";
@@ -411,15 +412,20 @@ function validManifestRuntime(runtime, expectedEnvironment) {
     (expectedEnvironment && runtime.environment !== expectedEnvironment) ||
     !runtime.services ||
     typeof runtime.services !== "object" ||
-    Array.isArray(runtime.services) ||
-    !runtime.services["geo-api"]
+    Array.isArray(runtime.services)
   ) {
     return false;
   }
   const entries = Object.entries(runtime.services);
-  if (!entries.length) return false;
   return entries.every(([serviceID, endpoint]) => {
-    if (!IDENTIFIER_PATTERN.test(serviceID) || !endpoint || typeof endpoint.base_url !== "string") return false;
+    if (
+      !SERVICE_IDENTIFIER_PATTERN.test(serviceID) ||
+      serviceID.length > 100 ||
+      !endpoint ||
+      typeof endpoint.base_url !== "string"
+    ) {
+      return false;
+    }
     try {
       validateBaseURL(endpoint.base_url);
       return true;
