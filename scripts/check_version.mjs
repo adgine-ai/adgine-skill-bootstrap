@@ -39,7 +39,39 @@ function readBootstrapProfile(root = bootstrapRoot()) {
   ) {
     throw new Error("invalid Bootstrap profile");
   }
+  distributionSources(profile);
   return profile;
+}
+
+function distributionSources(profile) {
+  const configured = profile.distribution_sources;
+  if (configured === undefined) {
+    return [{ id: "legacy", label: "GitHub", version_url: profile.version_url, release_url: profile.release_url }];
+  }
+  if (!Array.isArray(configured) || configured.length === 0) throw new Error("invalid Bootstrap distribution sources");
+  const seen = new Set();
+  return configured.map((source) => {
+    if (
+      !source ||
+      typeof source.id !== "string" ||
+      !/^[a-z][a-z0-9-]*$/.test(source.id) ||
+      typeof source.label !== "string" ||
+      !source.label.trim() ||
+      typeof source.version_url !== "string" ||
+      typeof source.release_url !== "string"
+    ) {
+      throw new Error("invalid Bootstrap distribution source");
+    }
+    if (seen.has(source.id)) throw new Error("duplicate Bootstrap distribution source");
+    seen.add(source.id);
+    for (const value of [source.version_url, source.release_url]) {
+      const url = new URL(value);
+      if (url.protocol !== "https:" || url.username || url.password) {
+        throw new Error("invalid Bootstrap distribution source URL");
+      }
+    }
+    return source;
+  });
 }
 
 function cacheFile(channel) {
@@ -69,7 +101,7 @@ function readFreshCache(channel, now = Date.now()) {
   try {
     const cached = JSON.parse(fs.readFileSync(cacheFile(channel), "utf8"));
     if (Number.isFinite(cached.checked_at_ms) && now - cached.checked_at_ms < CACHE_TTL_MS) {
-      return validateVersion(cached.latest);
+      return { latest: validateVersion(cached.latest), source_id: typeof cached.source_id === "string" ? cached.source_id : "" };
     }
   } catch {
     // A missing or malformed cache only causes a fresh remote lookup.
@@ -77,42 +109,57 @@ function readFreshCache(channel, now = Date.now()) {
   return "";
 }
 
-function writeCache(channel, latest, now = Date.now()) {
+function writeCache(channel, latest, sourceID, now = Date.now()) {
   try {
-    fs.writeFileSync(cacheFile(channel), `${JSON.stringify({ checked_at_ms: now, latest })}\n`, { mode: 0o600 });
+    fs.writeFileSync(cacheFile(channel), `${JSON.stringify({ checked_at_ms: now, latest, source_id: sourceID })}\n`, { mode: 0o600 });
   } catch {
     // Version checks must never fail the caller because caching is unavailable.
   }
 }
 
-async function fetchLatestVersion({ force = false, profile } = {}) {
+async function fetchLatestVersion({ force = false, profile, fetchImpl = fetch } = {}) {
+  const sources = distributionSources(profile);
   if (!force) {
     const cached = readFreshCache(profile.channel);
-    if (cached) return cached;
+    if (cached) {
+      return {
+        latest: cached.latest,
+        source: sources.find((source) => source.id === cached.source_id) || sources[0],
+      };
+    }
   }
   const testMode = process.env.NODE_ENV === "test";
-  const remoteURL = testMode && process.env.ADGINE_BOOTSTRAP_VERSION_TEST_URL
-    ? process.env.ADGINE_BOOTSTRAP_VERSION_TEST_URL
-    : `${profile.version_url}?t=${Date.now()}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetch(remoteURL, {
-      headers: {
-        Accept: "text/plain",
-        "Cache-Control": "no-cache",
-        "User-Agent": "adgine-skill-bootstrap-version-check/1.0",
-      },
-      redirect: "error",
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`version request returned HTTP ${response.status}`);
-    const latest = validateVersion((await response.text()).trim());
-    if (!(testMode && process.env.ADGINE_BOOTSTRAP_VERSION_TEST_URL)) writeCache(profile.channel, latest);
-    return latest;
-  } finally {
-    clearTimeout(timer);
+  const testURL = testMode ? process.env.ADGINE_BOOTSTRAP_VERSION_TEST_URL : "";
+  const candidates = testURL
+    ? [{ id: "test", label: "test", version_url: testURL, release_url: profile.release_url }]
+    : sources;
+  const failures = [];
+  for (const source of candidates) {
+    const separator = source.version_url.includes("?") ? "&" : "?";
+    const remoteURL = testURL ? source.version_url : `${source.version_url}${separator}t=${Date.now()}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetchImpl(remoteURL, {
+        headers: {
+          Accept: "text/plain",
+          "Cache-Control": "no-cache",
+          "User-Agent": "adgine-skill-bootstrap-version-check/1.0",
+        },
+        redirect: "error",
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`version request returned HTTP ${response.status}`);
+      const latest = validateVersion((await response.text()).trim());
+      if (!testURL) writeCache(profile.channel, latest, source.id);
+      return { latest, source };
+    } catch (error) {
+      failures.push(`${source.id}: ${error.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  throw new Error(`all Bootstrap version sources failed (${failures.join("; ")})`);
 }
 
 async function getVersionState(options = {}) {
@@ -121,7 +168,9 @@ async function getVersionState(options = {}) {
     const root = options.root || bootstrapRoot();
     const profile = readBootstrapProfile(root);
     const current = readLocalVersion(root);
-    const latest = await fetchLatestVersion({ ...options, profile });
+    const sources = distributionSources(profile);
+    const checked = await fetchLatestVersion({ ...options, profile });
+    const latest = checked.latest;
     const updateAvailable = compareVersions(latest, current) > 0;
     const installType = fs.existsSync(path.join(root, ".git")) ? "git" : "package";
     return {
@@ -131,7 +180,9 @@ async function getVersionState(options = {}) {
       update_available: updateAvailable,
       install_type: installType,
       update_command: installType === "git" ? `git -C ${root} pull --ff-only` : "",
-      release_url: profile.release_url,
+      version_source: checked.source.id,
+      release_url: checked.source.release_url,
+      release_urls: sources.map((source) => ({ id: source.id, label: source.label, url: source.release_url })),
     };
   } catch (error) {
     if (process.env.ADGINE_BOOTSTRAP_VERSION_DEBUG === "1") {
@@ -146,7 +197,10 @@ function formatUserInline(state) {
   if (state.install_type === "git") {
     return `Adgine Skill Bootstrap ${state.channel || "production"} v${state.latest} 已发布（当前 v${state.current}）。请确认后更新到最新版本。`;
   }
-  return `Adgine Skill Bootstrap ${state.channel || "production"} v${state.latest} 已发布（当前 v${state.current}）。请前往 ${state.release_url} 下载最新版并在当前 Agent 中重新安装。`;
+  const links = Array.isArray(state.release_urls) && state.release_urls.length > 0
+    ? state.release_urls.map((source) => `${source.label}：${source.url}`).join("；")
+    : state.release_url;
+  return `Adgine Skill Bootstrap ${state.channel || "production"} v${state.latest} 已发布（当前 v${state.current}）。请下载最新版并在当前 Agent 中重新安装。下载地址：${links}`;
 }
 
 async function main(argv = process.argv.slice(2)) {
@@ -172,4 +226,4 @@ if (invokedAsScript) {
   });
 }
 
-export { compareVersions, formatUserInline, getVersionState, readLocalVersion, validateVersion };
+export { compareVersions, distributionSources, fetchLatestVersion, formatUserInline, getVersionState, readLocalVersion, validateVersion };

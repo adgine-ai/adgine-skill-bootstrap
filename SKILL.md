@@ -13,7 +13,7 @@ Treat `检查 Adgine Skills 更新`, `同步 Adgine Skills`, `更新 Adgine Skil
 
 Before a Bootstrap workflow, run `node <skill-directory>/scripts/check_version.mjs --human`. A failure or empty output must not block synchronization. If it prints an update message, finish the current operation and include that message once at the end of the user response.
 
-The same update state may appear as `bootstrap_update` in `skillctl` output. Surface its `message` once; do not claim that an installation completed. When the user explicitly asks to update a git installation, obtain and run the `update_command` from `check-update`. Package installations require the user to download the GitHub Release ZIP and reinstall it through the current Agent. Do not name or assume a specific Agent product.
+The same update state may appear as `bootstrap_update` in `skillctl` output. Surface its `message` once; do not claim that an installation completed. When the user explicitly asks to update a git installation, obtain and run the `update_command` from `check-update`. Package installations require the user to download the release ZIP from the reported China mirror or permanent GitHub fallback and reinstall it through the current Agent. Do not name or assume a specific Agent product.
 
 ## Safety and credentials
 
