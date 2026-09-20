@@ -10,8 +10,8 @@
     {
       "id": "china",
       "label": "\u56fd\u5185\u955c\u50cf",
-      "version_url": "https://ftb.infiio.net/adgine/bootstrap/production/VERSION",
-      "release_url": "https://ftb.infiio.net/adgine/bootstrap/production/latest/adgine-skill-bootstrap.zip"
+      "version_url": "https://download.adgine.cn/adgine/bootstrap/production/VERSION",
+      "release_url": "https://download.adgine.cn/adgine/bootstrap/production/latest/adgine-skill-bootstrap.zip"
     },
     {
       "id": "github",

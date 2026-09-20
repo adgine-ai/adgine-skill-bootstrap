@@ -44,7 +44,7 @@ node scripts/check_version.mjs --human
 
 Package downloads are available from both routes:
 
-- China mirror: `https://ftb.infiio.net/adgine/bootstrap/production/latest/adgine-skill-bootstrap.zip`
+- China mirror: `https://download.adgine.cn/adgine/bootstrap/production/latest/adgine-skill-bootstrap.zip`
 - GitHub fallback: `https://github.com/adgine-ai/adgine-skill-bootstrap/releases/latest`
 
 If the current Agent cannot inject a secret environment variable, store the Key locally without putting it in command arguments:
