@@ -36,11 +36,16 @@ node scripts/skillctl.mjs permission-denied skill_forbidden
 
 This command does not retry the denied API operation. Other 401/403 errors must not be converted into a Skill synchronization without a recognized error code.
 
-Bootstrap update checks follow this package's own test or production channel on GitHub. They are advisory, cached, and never block Skill synchronization:
+Bootstrap update checks follow this package's own test or production channel. The China mirror is checked first and GitHub remains the permanent fallback. Checks are advisory, cached, and never block Skill synchronization:
 
 ```bash
 node scripts/check_version.mjs --human
 ```
+
+Package downloads are available from both routes:
+
+- China mirror: `https://ftb.infiio.net/adgine/bootstrap/production/latest/adgine-skill-bootstrap.zip`
+- GitHub fallback: `https://github.com/adgine-ai/adgine-skill-bootstrap/releases/latest`
 
 If the current Agent cannot inject a secret environment variable, store the Key locally without putting it in command arguments:
 

@@ -79,6 +79,29 @@ function validateBootstrapProfile(profile) {
   validateBaseURL(profile.access_center_url);
   validateHTTPSURL(profile.version_url, "Bootstrap version URL");
   validateHTTPSURL(profile.release_url, "Bootstrap release URL");
+  if (profile.distribution_sources !== undefined) {
+    if (!Array.isArray(profile.distribution_sources) || profile.distribution_sources.length === 0) {
+      throw new Error("Bootstrap profile has invalid distribution sources");
+    }
+    const sourceIDs = new Set();
+    for (const source of profile.distribution_sources) {
+      if (
+        !source ||
+        typeof source.id !== "string" ||
+        !/^[a-z][a-z0-9-]*$/.test(source.id) ||
+        typeof source.label !== "string" ||
+        !source.label.trim() ||
+        typeof source.version_url !== "string" ||
+        typeof source.release_url !== "string" ||
+        sourceIDs.has(source.id)
+      ) {
+        throw new Error("Bootstrap profile has invalid distribution sources");
+      }
+      sourceIDs.add(source.id);
+      validateHTTPSURL(source.version_url, "Bootstrap distribution version URL");
+      validateHTTPSURL(source.release_url, "Bootstrap distribution release URL");
+    }
+  }
   return profile;
 }
 
@@ -303,6 +326,8 @@ function addBootstrapUpdate(result, state) {
     latest: state.latest,
     install_type: state.install_type,
     release_url: state.release_url,
+    release_urls: state.release_urls,
+    version_source: state.version_source,
     update_command: state.update_command,
     message: formatUserInline(state),
   };
