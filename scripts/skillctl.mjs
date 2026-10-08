@@ -9,7 +9,7 @@ import readline from "node:readline";
 import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 
-import { formatUserInline, getVersionState } from "./check_version.mjs";
+import { assertBootstrapLifecycle, formatUserInline, getVersionState } from "./check_version.mjs";
 
 const LOCK_SCHEMA_VERSION = 1;
 const PROFILE_SCHEMA_VERSION = 1;
@@ -70,6 +70,7 @@ function validateBootstrapProfile(profile) {
     profile.schema_version !== PROFILE_SCHEMA_VERSION ||
     !new Set(["test", "production"]).has(profile.channel) ||
     profile.environment !== profile.channel ||
+    (profile.skill_lifecycle_mode !== undefined && profile.skill_lifecycle_mode !== "bootstrap") ||
     typeof profile.access_center_url !== "string" ||
     typeof profile.version_url !== "string" ||
     typeof profile.release_url !== "string"
@@ -116,6 +117,12 @@ function detectAgentSkillsDir() {
 
 async function main(argv = process.argv.slice(2)) {
   const command = argv[0] || "help";
+  if (["help", "-h", "--help"].includes(command)) {
+    process.stdout.write("Usage: skillctl.mjs {doctor|login|manifest|sync|preflight|check-update|permission-denied <error-code>|list|disable <skill-id>}\n");
+    return;
+  }
+  // Run before reading profiles, credentials, locks or contacting Access.
+  assertBootstrapLifecycle();
   const cfg = configuration();
   switch (command) {
     case "doctor":
@@ -145,11 +152,6 @@ async function main(argv = process.argv.slice(2)) {
     case "disable":
       if (!argv[1]) throw new Error("disable requires a Skill id");
       output(disableManagedSkill(cfg.skillsDir, argv[1]));
-      return;
-    case "help":
-    case "--help":
-    case "-h":
-      process.stdout.write("Usage: skillctl.mjs {doctor|login|manifest|sync|preflight|check-update|permission-denied <error-code>|list|disable <skill-id>}\n");
       return;
     default:
       throw new Error(`unknown command: ${command}`);
@@ -846,7 +848,9 @@ function readSecret(prompt) {
 const invokedAsScript = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedAsScript) {
   main().catch((error) => {
-    process.stderr.write(`ERROR: ${error.message}\n`);
+    process.stderr.write(error.code
+      ? `${JSON.stringify({ code: error.code, user_message: error.message })}\n`
+      : `ERROR: ${error.message}\n`);
     process.exitCode = 1;
   });
 }

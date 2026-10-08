@@ -1,9 +1,26 @@
 ---
 name: adgine-skill-bootstrap
-description: Check, synchronize, update, or refresh the Adgine Skills authorized by the user's API Key, and detect Bootstrap updates in the current Agent, including requests such as 检查、同步、更新或刷新 Adgine Skills.
+description: Install, check, synchronize, update, or refresh a personal Adgine Skill installation authorized by the user's API Key. Not for host-managed server inventories such as the Adgine AstrBot plugin.
 ---
 
 # Adgine Skill Bootstrap
+
+## Installation mode — check before any workflow
+
+If trusted host context declares `host-managed`, or execution uses
+`ADGINE_SKILL_LIFECYCLE_MODE=host-managed` / `ADGINE_CREDENTIAL_MODE=request`,
+do not run this Skill's login, sync, preflight, version check or upgrade commands.
+The host manages the server inventory; report credential failures as host identity
+resolution problems. Never request a user's Key, persist a request credential, or
+remove server Skills based on one user's Manifest.
+
+Without a host declaration, a valid installed `bootstrap-profile.json` identifies
+a personal installation. Its `skill_lifecycle_mode` is `bootstrap`; old valid
+profiles without that field remain compatible. Users need not set a mode variable.
+An invalid/missing profile is an installation error, not a reason to repeatedly
+login/sync or guess the mode from the Agent's product name.
+
+The following workflows apply only to that personal installation.
 
 Use the bundled `scripts/skillctl.mjs` when the user asks to install, check, synchronize, update, refresh, inspect, or disable Adgine Skills.
 
@@ -38,4 +55,4 @@ The same update state may appear as `bootstrap_update` in `skillctl` output. Sur
 
 `sync` is always a forced check. Child Skills use `preflight`, which accesses the Access Center only when the last successful Manifest check is at least 10 minutes old. If an Adgine API returns `skill_forbidden` or `capability_forbidden`, run `permission-denied <error-code>` once immediately, bypassing the 10-minute interval. Stop the denied operation, do not retry it automatically, and report `user_message` plus the resulting authorization change. An invalid or revoked Key requires Key remediation instead of repeated synchronization.
 
-The release channel, Access Center URL and universal host selector are built in. The target directory is automatically derived from the Bootstrap Skill's own installation directory. Do not ask the user to configure any of them. `GEO_API_BASE_URL` is a developer-only override, not an installation setting. If synchronization reports that no API Key is configured, ask the user to set only `ADGINE_API_KEY` in the current Agent's secret/environment settings. Do not assume or name a specific Agent product. Run `doctor` and read `references/configuration.md` only when synchronization fails and troubleshooting is needed.
+The release channel, Access Center URL and universal host selector are built in. The target directory is automatically derived from the Bootstrap Skill's own installation directory. Do not ask the user to configure any of them. `GEO_API_BASE_URL` is a developer-only override, not an installation setting. If synchronization reports no API Key, use the Agent's secure secret settings when available; otherwise use `skillctl login` through a private standard-input channel. Never ask for a Key in ordinary chat or as a command argument. If the host offers neither secure input method, stop and explain that limitation. Run `doctor` and read `references/configuration.md` only when personal synchronization fails.

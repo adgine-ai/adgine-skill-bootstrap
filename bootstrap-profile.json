@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "skill_lifecycle_mode": "bootstrap",
   "channel": "production",
   "environment": "production",
   "access_center_url": "https://access-center.adgine.ai",
