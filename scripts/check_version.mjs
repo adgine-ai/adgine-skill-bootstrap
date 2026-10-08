@@ -10,6 +10,22 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 5_000;
 const VERSION_PATTERN = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
 
+// Host declarations win over a personal profile, including profiles from older
+// packages. Never let a request credential enter a personal lifecycle operation.
+function assertBootstrapLifecycle(environment = process.env) {
+  const mode = (environment.ADGINE_SKILL_LIFECYCLE_MODE || "").trim();
+  if (mode && !["bootstrap", "host-managed"].includes(mode)) {
+    const error = new Error("Invalid ADGINE_SKILL_LIFECYCLE_MODE; stop instead of guessing an installation mode.");
+    error.code = "invalid_lifecycle_mode";
+    throw error;
+  }
+  if (mode === "host-managed" || (environment.ADGINE_CREDENTIAL_MODE || "").trim() === "request") {
+    const error = new Error("本环境由宿主管理 Skill 安装和更新；不要执行 Bootstrap 登录、同步或升级。凭证错误请检查当前发送者的身份解析，不要使用共享 Key。");
+    error.code = "host_managed_lifecycle";
+    throw error;
+  }
+}
+
 function bootstrapRoot() {
   return path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 }
@@ -34,6 +50,7 @@ function readBootstrapProfile(root = bootstrapRoot()) {
     profile?.schema_version !== 1 ||
     !new Set(["test", "production"]).has(profile.channel) ||
     profile.environment !== profile.channel ||
+    (profile.skill_lifecycle_mode !== undefined && profile.skill_lifecycle_mode !== "bootstrap") ||
     typeof profile.version_url !== "string" ||
     typeof profile.release_url !== "string"
   ) {
@@ -165,6 +182,7 @@ async function fetchLatestVersion({ force = false, profile, fetchImpl = fetch } 
 async function getVersionState(options = {}) {
   if (process.env.ADGINE_SKIP_BOOTSTRAP_VERSION_CHECK) return null;
   try {
+    assertBootstrapLifecycle();
     const root = options.root || bootstrapRoot();
     const profile = readBootstrapProfile(root);
     const current = readLocalVersion(root);
@@ -204,6 +222,7 @@ function formatUserInline(state) {
 }
 
 async function main(argv = process.argv.slice(2)) {
+  assertBootstrapLifecycle();
   const state = await getVersionState({ force: argv.includes("--force") });
   if (argv.includes("--human")) {
     const message = formatUserInline(state);
@@ -221,9 +240,13 @@ async function main(argv = process.argv.slice(2)) {
 
 const invokedAsScript = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedAsScript) {
-  main().catch(() => {
-    // Update checks are advisory and must never block Skill execution.
+  main().catch((error) => {
+    if (error.code) {
+      process.stderr.write(`${JSON.stringify({ code: error.code, user_message: error.message })}\n`);
+      process.exitCode = 1;
+    }
+    // Network update checks remain advisory; lifecycle misuse fails explicitly.
   });
 }
 
-export { compareVersions, distributionSources, fetchLatestVersion, formatUserInline, getVersionState, readLocalVersion, validateVersion };
+export { assertBootstrapLifecycle, compareVersions, distributionSources, fetchLatestVersion, formatUserInline, getVersionState, readLocalVersion, validateVersion };

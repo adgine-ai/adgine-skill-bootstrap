@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "skill_lifecycle_mode": "bootstrap",
   "channel": "test",
   "environment": "test",
   "access_center_url": "https://access-center.afrgame.dev:31000",

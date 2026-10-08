@@ -6,9 +6,14 @@ The source of truth lives in the private `adgine-skills` repository. Files in th
 
 ## Install and synchronize
 
+This is the personal-installation workflow. The generated profile identifies it
+automatically; users do not set a lifecycle variable. In a host-managed server
+such as AstrBot, use the host plugin's catalog sync instead, never Bootstrap
+login/sync/upgrades or a shared account Key. Old valid personal profiles remain compatible.
+
 1. Download the release ZIP from `https://download.adgine.cn/adgine/bootstrap/test/latest/adgine-skill-bootstrap-test.zip`. If the China mirror is unavailable, use `https://github.com/adgine-ai/adgine-skill-bootstrap/tree/test`. The ZIP has `SKILL.md` at the archive root.
 2. Install the ZIP in the target Agent.
-3. Configure only `ADGINE_API_KEY` in the Agent's secret/environment settings.
+3. Configure the Key through the Agent's secure `ADGINE_API_KEY` secret settings, or private standard-input `skillctl login` when environment injection is unavailable. Never paste it into ordinary chat; stop if the host cannot provide secure input.
 4. Ask the Agent to check, synchronize, update, or refresh Adgine Skills; all four requests immediately apply the current server Manifest.
 5. If the synchronized Skills are not visible immediately, refresh or restart the Agent once.
 

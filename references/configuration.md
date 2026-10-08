@@ -1,6 +1,23 @@
 # Bootstrap configuration
 
-The only user setting is `ADGINE_API_KEY`. Supply a new `adg_sk_live_*` Key through the current Agent's secret/environment configuration. Legacy `geo_sk_live_*`, `abi_*`, and POC `agk_*` Keys are not accepted by Bootstrap.
+## Personal installation versus host management
+
+The generated `bootstrap-profile.json` declares `skill_lifecycle_mode: bootstrap`.
+Old valid profiles without this optional field are still personal installations.
+Users do not need to set a lifecycle environment variable or edit the profile.
+Trusted host context / `ADGINE_SKILL_LIFECYCLE_MODE=host-managed` takes precedence;
+`ADGINE_CREDENTIAL_MODE=request` also blocks personal lifecycle operations, even
+if a personal Bootstrap is present. In those environments, use the host's catalog
+sync and sender identity resolution, never Bootstrap login or synchronization.
+These commands return `host_managed_lifecycle` before loading personal settings.
+An unrecognized lifecycle variable returns `invalid_lifecycle_mode` instead of guessing.
+
+The remaining instructions apply only to personal installations.
+
+The only user credential is an `adg_sk_live_*` Key. Use the Agent's secure secret
+configuration through `ADGINE_API_KEY`, or the private standard-input login below
+if environment injection is unavailable. Never supply the Key in ordinary chat.
+Legacy `geo_sk_live_*`, `abi_*`, and POC `agk_*` Keys are not accepted by Bootstrap.
 
 This generated Bootstrap package is locked to:
 
