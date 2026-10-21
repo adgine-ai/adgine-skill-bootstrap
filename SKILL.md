@@ -1,6 +1,6 @@
 ---
 name: adgine-skill-bootstrap
-description: Install, check, synchronize, update, or refresh a personal Adgine Skill installation authorized by the user's API Key. Not for host-managed server inventories such as the Adgine AstrBot plugin.
+description: Install, check, synchronize, update, or refresh a personal Adgine Skill installation authorized by the user's API Key. Not for host-managed server inventories managed by an execution host.
 ---
 
 # Adgine Skill Bootstrap

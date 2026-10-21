@@ -7,8 +7,8 @@ The source of truth lives in the private `adgine-skills` repository. Files in th
 ## Install and synchronize
 
 This is the personal-installation workflow. The generated profile identifies it
-automatically; users do not set a lifecycle variable. In a host-managed server
-such as AstrBot, use the host plugin's catalog sync instead, never Bootstrap
+automatically; users do not set a lifecycle variable. In a host-managed server,
+use the host's catalog sync instead, never Bootstrap
 login/sync/upgrades or a shared account Key. Old valid personal profiles remain compatible.
 
 1. Download the release ZIP from `https://download.adgine.cn/adgine/bootstrap/production/latest/adgine-skill-bootstrap.zip`. If the China mirror is unavailable, use `https://github.com/adgine-ai/adgine-skill-bootstrap/releases/latest`. The ZIP has `SKILL.md` at the archive root.
