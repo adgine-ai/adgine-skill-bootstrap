@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "adgine-skill-bootstrap",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "channel": "test",
   "environment": "test",
   "source": "adgine-skills/bootstrap/universal",
